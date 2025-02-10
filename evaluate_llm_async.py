@@ -28,7 +28,7 @@ def parse_args():
         help="Only neccesary when serving with vllm"
     )
     parser.add_argument(
-        "--model_path",
+        "--tokenizer_path",
         type=str,
         default=None,
         help="absolute path to your model directory"
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     model = MODEL_CLASS(
         endpoint_ip = args.endpoint_ip,
         served_model_name = args.served_model_name,
-        model_path=args.model_path,
+        tokenizer_path=args.tokenizer_path,
         eos_token = args.eos_token,
         system_prompt = SYS_PROMPT_DICT[args.system_prompt_type], 
     )
