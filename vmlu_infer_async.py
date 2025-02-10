@@ -1,14 +1,14 @@
 import os
 import json
-import asyncio
 import argparse
 
-from tqdm.asyncio import tqdm
-
-from datasets import load_from_disk, Dataset
-
 from src.utils import normalize_name
-from src.llms import VllmModel, TgiModel
+from src.datasets import VmluDataset
+from src.llms import (
+    VllmModel, 
+    VllmModelForMultipleChoice,
+    TgiModel
+)
 
 
 def parse_args():
@@ -22,10 +22,16 @@ def parse_args():
         help=""
     )
     parser.add_argument(
-        "--model_name",
+        "--served_model_name",
         type=str,
         default=None,
-        help=""
+        help="Only neccesary when serving with vllm"
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default=None,
+        help="absolute path to your model directory"
     )
     parser.add_argument(
         "--engine",
@@ -35,16 +41,23 @@ def parse_args():
         help="`tgi` or `vllm`"
     )
     parser.add_argument(
-        "--max_len",
-        type=int,
-        default=4096,
-        help=""
+        "--dataset_path",
+        type=str,
+        default=None,
+        help="path of the dataset you want to evaluate"
     )
     parser.add_argument(
-        "--max_input_len",
-        type=int,
-        default=3072,
-        help=""
+        "--dataset_name",
+        type=str,
+        default="vmlu",
+        choices=["vmlu", "vi_mmlu", "mmlu"],
+        help="name of the dataset you want to evaluate"
+    )
+    parser.add_argument(
+        "--output_path",
+        type=str,
+        default=None,
+        help="the path to the output file"
     )
     parser.add_argument(
         "--eos_token",
@@ -59,15 +72,16 @@ def parse_args():
         help="",
         choices=["empty", "vistral", "vinbigdata", "mixsura", "vinallama", "seallm", "llama3"],
     )
+    # parser.add_argument( 
+    #     "--compute_final_score",
+    #     action='store_true',
+    #     help="Do you wanna compute the final score or you just need answers from your LLMs"
+    # )
     
     args = parser.parse_args()
     
     return args
 
-
-print("="*56)
-print("="*20+" VMLU VAL INFER TGI "+"="*20)
-print("="*56)
 
 
 SYS_PROMPT_DICT = {
@@ -80,70 +94,61 @@ SYS_PROMPT_DICT = {
 }
 
 
-# Hãy trả lời câu hỏi trắc nghiệm sau và đưa câu trả lời cuối cùng của bạn vào trong \boxed{{}}: # for 70B models
-# Hãy trả lời câu hỏi trắc nghiệm sau:
-# Đưa ra câu trả lời cuối cùng dưói dạng JSON. VD: {{"final_choice": "A"}}
-USER_PROMPT_TEMPLATE = r"""
-Hãy trả lời câu hỏi trắc nghiệm sau. Đưa ra câu trả lời cuối cùng dưói dạng JSON. VD: {{"final_choice": A}}
-{question}
-{choices}
-Lưu ý: Câu hỏi chỉ có một đáp án duy nhất.
-""".strip()
-
-COT_PROMPT = """
-Trước hết hãy phân tích câu hỏi một cách cẩn thận và suy luận từng bước một.
-""".strip()
-
-
-print("="*56)
-
-
-class VllmModelForMMLU(VllmModel):
-    def extract_sample(self, sample):
-        question = sample["question"]
-        choices = sample["choices"]
-        return {
-            "question": question, 
-            "choices": "\n".join(choices), 
-        }
-    
-    
-class TgiModelForMMLU(TgiModel):
-    def extract_sample(self, sample):
-        question = sample["question"]
-        choices = sample["choices"]
-        return {
-            "question": question, 
-            "choices": "\n".join(choices), 
-        }
+# print("="*56)
        
 
 if __name__ == "__main__":
     
     args = parse_args()
-    data_hub = "/workspace/home/NLP_CORE/evaluation/benchmark_eval_v3/data"
-    data_name = "vmlu_valid_full"
-    data_path = data_hub + f"/{data_name}"
-    dataset = load_from_disk(data_path)
-    output_folder = "/workspace/home/NLP_CORE/evaluation/benchmark_eval_v3/output/"
-    # output_folder = "/workspace/NLP_CORE/evaluation/benchmark_eval/output/"
-    output_file = output_folder + normalize_name(args.model_name) + f"/{data_name}_tgi.jsonl"
-    if not os.path.exists(output_folder + normalize_name(args.model_name)):
-        os.makedirs(output_folder + normalize_name(args.model_name))
-    if args.engine == "vllm":
-        modelformmlu = VllmModelForMMLU
+    # load dataset
+    if args.dataset_name=="vmlu":
+        DATASET_CLASS = VmluDataset
+    elif args.dataset_name=="vi_mmlu":
+        pass
+    elif args.dataset_name=="mmlu":
+        pass
     else:
-        modelformmlu = TgiModelForMMLU
-    model = modelformmlu(
+        raise ValueError(
+            "`dataset_name` must take one of the following values: "
+            "vmlu, vi_mmlu, mmlu"
+        )
+    if args.dataset_path:
+        dataset = DATASET_CLASS(args.dataset_path)
+    else:
+        default_dataset_path = f"./data/{args.dataset_name}/test.jsonl"
+        dataset = DATASET_CLASS(default_dataset_path)
+
+    if not args.output_path:
+        output_folder = os.path.abspath("./output/")
+        if not os.path.exists(output_folder + "/" + normalize_name(args.served_model_name)):
+            os.makedirs(output_folder + "/" + normalize_name(args.served_model_name))
+        output_path = output_folder + "/" + normalize_name(args.served_model_name) + f"/{args.dataset_name}_{args.engine}.jsonl"
+    else:
+        output_path = args.output_path
+
+    if args.engine == "vllm":
+        if args.dataset_name in ["vmlu", "vi_mmlu", "mmlu"]:
+            MODEL_CLASS = VllmModelForMultipleChoice
+        else:
+            MODEL_CLASS =  VllmModel
+    else:
+        if args.dataset_name in ["vmlu", "vi_mmlu", "mmlu"]:
+            MODEL_CLASS = TgiModel
+        else:
+            MODEL_CLASS = TgiModel
+    model = MODEL_CLASS(
         endpoint_ip = args.endpoint_ip,
-        model_name = args.model_name,
+        served_model_name = args.served_model_name,
+        model_path=args.model_path,
         eos_token = args.eos_token,
         system_prompt = SYS_PROMPT_DICT[args.system_prompt_type], 
-        user_prompt_template = USER_PROMPT_TEMPLATE, 
-        assistant_prompt_prefix = COT_PROMPT
     )
-    asyncio.run(model.generate_async(
-        dataset=dataset,
-        output_field="cot_answer",
-        output_file=output_file
-    ))
+    sys_answers, final_choices = model(dataset.to_user_prompts())
+    # print(dataset[0])
+    with open(output_path, "w") as f:
+        for sample, answer_candidates, final_choice_candidates in zip(dataset, sys_answers, final_choices):
+            f.write(json.dumps({
+                "explanation": answer_candidates,
+                "final_choice": final_choice_candidates,
+                **sample
+            }) + "\n")
