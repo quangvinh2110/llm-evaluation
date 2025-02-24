@@ -2,13 +2,16 @@ import os
 import json
 import argparse
 
-from src.utils import normalize_name
+from src.utils import normalize_name, read_jsonl
 from src.datasets import VmluDataset
 from src.llms import (
     VllmModel, 
     VllmModelForMultipleChoice,
     TgiModel
 )
+
+os.environ['http_proxy'] = ""
+os.environ['https_proxy'] = ""
 
 
 def parse_args():
@@ -59,39 +62,15 @@ def parse_args():
         default=None,
         help="the path to the output file"
     )
-    parser.add_argument(
-        "--eos_token",
-        type=str,
-        default=None,
-        help=""
+    parser.add_argument( 
+        "--overwrite_output_file",
+        action='store_true',
+        help="Do you wanna overwrite the output file or not"
     )
-    parser.add_argument(
-        "--system_prompt_type",
-        type=str,
-        default="empty",
-        help="",
-        choices=["empty", "vistral", "vinbigdata", "mixsura", "vinallama", "seallm", "llama3"],
-    )
-    # parser.add_argument( 
-    #     "--compute_final_score",
-    #     action='store_true',
-    #     help="Do you wanna compute the final score or you just need answers from your LLMs"
-    # )
     
     args = parser.parse_args()
     
     return args
-
-
-
-SYS_PROMPT_DICT = {
-    "empty": "",
-    "vistral": "Bạn là một trợ lí Tiếng Việt nhiệt tình và trung thực. Hãy luôn trả lời một cách hữu ích nhất có thể, đồng thời giữ an toàn.\nCâu trả lời của bạn không nên chứa bất kỳ nội dung gây hại, phân biệt chủng tộc, phân biệt giới tính, độc hại, nguy hiểm hoặc bất hợp pháp nào. Hãy đảm bảo rằng các câu trả lời của bạn không có thiên kiến xã hội và mang tính tích cực.Nếu một câu hỏi không có ý nghĩa hoặc không hợp lý về mặt thông tin, hãy giải thích tại sao thay vì trả lời một điều gì đó không chính xác. Nếu bạn không biết câu trả lời cho một câu hỏi, hãy trẳ lời là bạn không biết và vui lòng không chia sẻ thông tin sai lệch.",
-    "vinbigdata": "A chat between a curious user and an artificial intelligence assistant. The assistant think carefully, then intergrate step-by-step reasoning to answer the question.",
-    "mixsura": "Bạn là một trợ lý thông minh. Hãy thực hiện các yêu cầu hoặc trả lời câu hỏi từ người dùng bằng tiếng Việt.",
-    "vinallama": "Bạn là một trợ lí AI hữu ích. Hãy trả lời người dùng một cách chính xác.",
-    "seallm": "You are a helpful assistant.",
-}
 
 
 # print("="*56)
@@ -113,10 +92,10 @@ if __name__ == "__main__":
             "vmlu, vi_mmlu, mmlu"
         )
     if args.dataset_path:
-        dataset = DATASET_CLASS(args.dataset_path)
+        dataset = DATASET_CLASS(filename=args.dataset_path)
     else:
         default_dataset_path = f"./data/{args.dataset_name}/test.jsonl"
-        dataset = DATASET_CLASS(default_dataset_path)
+        dataset = DATASET_CLASS(filepath=default_dataset_path)
 
     if not args.output_path:
         output_folder = os.path.abspath("./output/")
@@ -125,6 +104,9 @@ if __name__ == "__main__":
         output_path = output_folder + "/" + normalize_name(args.served_model_name) + f"/{args.dataset_name}_{args.engine}.jsonl"
     else:
         output_path = args.output_path
+    if args.overwrite_output_file:
+        f = open(output_path, "w")
+        f.close()
 
     if args.engine == "vllm":
         if args.dataset_name in ["vmlu", "vi_mmlu", "mmlu"]:
@@ -143,12 +125,20 @@ if __name__ == "__main__":
         eos_token = args.eos_token,
         system_prompt = SYS_PROMPT_DICT[args.system_prompt_type], 
     )
-    sys_answers, final_choices = model(dataset.to_user_prompts())
-    # print(dataset[0])
-    with open(output_path, "w") as f:
-        for sample, answer_candidates, final_choice_candidates in zip(dataset, sys_answers, final_choices):
-            f.write(json.dumps({
-                "explanation": answer_candidates,
-                "final_choice": final_choice_candidates,
-                **sample
-            }) + "\n")
+    infered_dataset = []
+    if os.path.isfile(output_path):
+        infered_dataset = read_jsonl(output_path)
+    for batch in dataset[len(infered_dataset):].batch_iter(batch_size=128):
+        sys_answers, final_choices = model(
+            batch.to_user_prompts(),
+            # n=10,
+            # best_of=10,
+            # temperature=0.6
+        )
+        with open(output_path, "a") as f:
+            for sample, answer_candidates, final_choice_candidates in zip(batch, sys_answers, final_choices):
+                f.write(json.dumps({
+                    "explanation": answer_candidates,
+                    "final_choice": final_choice_candidates,
+                    **sample
+                }) + "\n")
