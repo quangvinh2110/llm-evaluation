@@ -2,16 +2,12 @@ import os
 import json
 import argparse
 
-from src.utils import normalize_name, read_jsonl
-from src.datasets import VmluDataset
+from src.utils import normalize_name
+from src.datasets import ViMCQDataset
 from src.llms import (
     VllmModel, 
     VllmModelForMultipleChoice,
-    TgiModel
 )
-
-os.environ['http_proxy'] = ""
-os.environ['https_proxy'] = ""
 
 
 def parse_args():
@@ -53,7 +49,7 @@ def parse_args():
         "--dataset_name",
         type=str,
         default="vmlu",
-        choices=["vmlu", "vi_mmlu", "mmlu"],
+        choices=["vmlu", "vi_mmlu"],
         help="name of the dataset you want to evaluate"
     )
     parser.add_argument(
@@ -65,65 +61,60 @@ def parse_args():
     parser.add_argument( 
         "--overwrite_output_file",
         action='store_true',
-        help="Do you wanna overwrite the output file or not"
+        help="Do you wanna overwrite the output file?"
     )
     
     args = parser.parse_args()
     
     return args
-
-
-# print("="*56)
        
 
 if __name__ == "__main__":
     
     args = parse_args()
     # load dataset
-    if args.dataset_name=="vmlu":
-        DATASET_CLASS = VmluDataset
-    elif args.dataset_name=="vi_mmlu":
-        pass
-    elif args.dataset_name=="mmlu":
-        pass
+    if args.dataset_name in ["vmlu", "vi_mmlu"]:
+        DATASET_CLASS = ViMCQDataset
     else:
         raise ValueError(
             "`dataset_name` must take one of the following values: "
-            "vmlu, vi_mmlu, mmlu"
+            "vmlu, vi_mmlu"
         )
     if args.dataset_path:
-        dataset = DATASET_CLASS(filename=args.dataset_path)
+        dataset = DATASET_CLASS(args.dataset_path)
     else:
         default_dataset_path = f"./data/{args.dataset_name}/test.jsonl"
-        dataset = DATASET_CLASS(filepath=default_dataset_path)
+        dataset = DATASET_CLASS(default_dataset_path)
 
     if not args.output_path:
-        output_folder = os.path.abspath("./output/")
-        if not os.path.exists(output_folder + "/" + normalize_name(args.served_model_name)):
-            os.makedirs(output_folder + "/" + normalize_name(args.served_model_name))
-        output_path = output_folder + "/" + normalize_name(args.served_model_name) + f"/{args.dataset_name}_{args.engine}.jsonl"
+        output_folder = os.path.abspath("./output/") + "/" + normalize_name(args.served_model_name)
+        output_path = output_folder + f"/{args.dataset_name}_{args.engine}.jsonl"
     else:
         output_path = args.output_path
-    if args.overwrite_output_file:
-        f = open(output_path, "w")
-        f.close()
+        output_folder = "/".join(output_path.split("/")[:-1])
+
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
     if args.engine == "vllm":
-        if args.dataset_name in ["vmlu", "vi_mmlu", "mmlu"]:
+        if args.dataset_name in ["vmlu", "vi_mmlu"]:
             MODEL_CLASS = VllmModelForMultipleChoice
         else:
             MODEL_CLASS =  VllmModel
-    else:
-        if args.dataset_name in ["vmlu", "vi_mmlu", "mmlu"]:
+    elif args.engine == "tgi":
+        if args.dataset_name in ["vmlu", "vi_mmlu"]:
             MODEL_CLASS = TgiModel
         else:
             MODEL_CLASS = TgiModel
+    else:
+        raise ValueError(
+            "`engine` must take one of the following values: "
+            "tgi, vllm"
+        )
     model = MODEL_CLASS(
         endpoint_ip = args.endpoint_ip,
         served_model_name = args.served_model_name,
         tokenizer_path=args.tokenizer_path,
-        eos_token = args.eos_token,
-        system_prompt = SYS_PROMPT_DICT[args.system_prompt_type], 
     )
     infered_dataset = []
     if os.path.isfile(output_path):
