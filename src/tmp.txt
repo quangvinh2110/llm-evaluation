@@ -1,32 +1,25 @@
-class BaseModelForMultipleChoice(BaseModel):
+Provide a Vietnamese first-reasoning-then-conclusion answer for the following question based on its right choice.
 
-    FINAL_CHOICE_PATTERN = re.compile(r"\{\"final_choice\": \"(.+?)\"\}", flags=re.I)
+Example:
+Question: Ngành tài chính - ngân hàng không có đặc điểm nào sau đây?
+A. Tài chính ngân hàng là một lĩnh vực rất rộng và nhiều hoạt động.
+B. Nhu cầu của khách đa dạng, phong phú và thường có tính thời vụ.
+C. Sản phẩm thường được thực hiện theo các quy trình nghiêm ngặt.
+D. Gồm hai bộ phận khăng khít với nhau là tài chính và ngân hàng.
 
-    async def extract_final_choice(
-        self,
-        session,
-        user_query,
-        sys_answer,
-    ):
-        answer_candidates = self.FINAL_CHOICE_PATTERN.findall(sys_answer)
-        if answer_candidates:
-            answer_candidate = answer_candidates[-1][0].upper()
-            if answer_candidate in ["A", "B", "C", "D", "E"]:
-                return answer_candidate
-        prompt = self.tokenizer.apply_chat_template(
-            [{"role": "user", "content": user_query}], 
-            tokenize=False, add_generation_prompt=True
-        ) + sys_answer + "\nFinal answer: "
-        data = self.format_request_payload(
-            prompt, 
-            max_tokens=1,
-            allowed_token_ids=[
-                self.tokenizer.convert_tokens_to_ids("A"),
-                self.tokenizer.convert_tokens_to_ids("B"),
-                self.tokenizer.convert_tokens_to_ids("C"),
-                self.tokenizer.convert_tokens_to_ids("D"),
-                self.tokenizer.convert_tokens_to_ids("E"),
-            ]
-        )
-        resp = await self.request(session=session, data=data)
-        return resp[0]
+Right choice: B
+
+Answer: Ngành tài chính - ngân hàng có những đặc điểm sau:
+- Bao gồm hai bộ phận liên kết chặt chẽ là tài chính và ngân hàng.
+- Là một lĩnh vực rất rộng, bao gồm nhiều hoạt động khác nhau.
+- Do tính rủi ro cao và có thể gây ra phản ứng dây chuyền trong hệ thống, các sản phẩm tài chính - ngân hàng thường được thực hiện theo các quy trình nghiêm ngặt.
+Trong khi đó, đáp án B cho rằng nhu cầu của khách hàng đa dạng, phong phú và thường có tính thời vụ. Tuy nhiên, nhu cầu của khách hàng trong lĩnh vực này không nhất thiết có tính thời vụ, mà thường ổn định và liên tục. Do đó, đáp án B không phải là đặc điểm của ngành tài chính - ngân hàng.
+
+Vì vậy, đáp án cho câu hỏi là B.
+
+---
+Question: {question}
+
+Right choice: {right_choice}
+
+Answer:
